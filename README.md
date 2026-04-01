@@ -18,14 +18,18 @@ T527 Vivante NPU에서 **서버 없이** 동작하는 음성 AI 파이프라인.
 
 ### 메모리 사용량
 
-| 항목 | 값 |
-|------|-----|
-| 앱 PSS | **90MB** |
-| 앱 RSS | **209MB** |
-| 시스템 전체 RAM | 3.96GB |
-| 남은 RAM | ~2.4GB |
-| Wakeword는 **상시 로드** | NB 229KB + 0.5초마다 mel+NPU 44ms (CPU 사용률 ~9%) |
-| Conformer는 **상시 로드** | NB 102MB, wakeword 감지 시에만 추론 |
+| 항목 | 크기 | RAM 3.96GB 대비 |
+|------|------|---------------|
+| 모델 (Conformer 102MB + Wakeword 229KB) | 102MB | **2.5%** |
+| 앱 실제 점유 (PSS) | **90MB** | **2.2%** |
+| 앱 전체 사용 (RSS) | 209MB | 5.2% |
+| 남은 RAM | ~2.4GB | 60.6% |
+
+> PSS = 공유 메모리를 앱 수만큼 나눈 실제 점유량. RSS = 공유 포함 전체.
+> 실제 메모리 차지는 PSS 90MB.
+
+- Wakeword **상시 로드**: NB 229KB + 0.5초마다 mel+NPU 44ms (CPU ~9%)
+- Conformer **상시 로드**: NB 102MB, wakeword 감지 시에만 추론
 
 ### STT 정확도
 
