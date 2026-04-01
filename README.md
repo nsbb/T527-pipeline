@@ -10,11 +10,22 @@ T527 Vivante NPU에서 **서버 없이** 동작하는 음성 AI 파이프라인.
 
 ## 성능
 
-| 단계 | 모델 | NPU 추론 | 전체 지연 |
-|------|------|---------|---------|
-| Wakeword (VT) | BCResNet-t2 uint8 | **8ms** | mel 36ms + npu 8ms = **44ms** |
-| STT | Conformer CTC uint8 | **250ms** | mel 70ms + npu 250ms = **320ms** |
-| **파이프라인 전체** | | | "하이원더" → 텍스트 **~3.5초** |
+| 단계 | 모델 | NB 크기 | NPU 추론 | 전체 지연 |
+|------|------|--------|---------|---------|
+| Wakeword (VT) | BCResNet-t2 uint8 | **229KB** | **8ms** | mel 36ms + npu 8ms = **44ms** |
+| STT | Conformer CTC uint8 | **102MB** | **250ms** | mel 70ms + npu 250ms = **320ms** |
+| **파이프라인 전체** | | **~102MB** | | "하이원더" → 텍스트 **~3.5초** |
+
+### 메모리 사용량
+
+| 항목 | 값 |
+|------|-----|
+| 앱 PSS | **90MB** |
+| 앱 RSS | **209MB** |
+| 시스템 전체 RAM | 3.96GB |
+| 남은 RAM | ~2.4GB |
+| Wakeword는 **상시 로드** | NB 229KB + 0.5초마다 mel+NPU 44ms (CPU 사용률 ~9%) |
+| Conformer는 **상시 로드** | NB 102MB, wakeword 감지 시에만 추론 |
 
 ### STT 정확도
 
