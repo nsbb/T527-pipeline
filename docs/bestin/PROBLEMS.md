@@ -30,7 +30,7 @@
 
 **증상:** wakeword 감지 후 STT가 "어", "음" 등 짧은 간투어를 인식
 
-**원인:** wakeword("하이 원더") 꼬리 음성이 AudioRecord 버퍼에 남아서 VAD가 음성으로 잡음. 무음 구간도 speechChunks에 포함되어 total duration이 실제보다 길게 측정됨.
+**원인:** wakeword("하이 원더") 꼬리 음성이 AudioRecord 버퍼에 남아서 VAD가 음성으로 잡음. 무음 구간도 speechChunks에 포함되어 total duration이 실제보다 길게 측정됨. 데브킷 USB 마이크에서는 미발생 — FM1388의 실내 반향 + wallpadcall의 silenced/unsilenced 전환 시 오디오 버스트가 원인으로 추정.
 
 **시도한 방법:**
 | 방법 | 결과 |
@@ -60,7 +60,7 @@
 
 **증상:** 데브킷 USB 마이크에서 prob 0.55~0.64이던 "하이 원더"가 월패드 FM1388에서 0.40~0.51로 낮아짐. threshold(0.40) 턱걸이.
 
-**원인:** FM1388 디지털 마이크의 주파수 응답/게인이 USB 마이크와 다름. wakeword 모델(BCResNet)이 USB 마이크 특성으로 양자화됨.
+**원인:** 주요 원인은 6번 마이크 점유 충돌. wallpadcall이 silenced 시키면 오디오가 거의 0으로 들어와서 prob이 0.10에 고정됨. 데브킷 USB 마이크에서는 경쟁 앱이 없어서 2m+ 거리에서도 정상 동작했음. FM1388 마이크 특성 차이(주파수 응답/게인)도 부분적 원인.
 
 **시도한 방법:**
 | 방법 | 결과 |
@@ -88,6 +88,8 @@ dumpsys audio 로그:
 반복적으로 silenced → release → 재시작 됨.
 
 **시도한 방법:** 없음 (발견 직후)
+
+**영향:** 이 문제가 5번(wakeword prob 낮음), 3번(간투어)의 근본 원인. silenced 상태에서 오디오가 0이 되므로 거리와 무관하게 감지 불가. 데브킷 USB 마이크에서 2m+ 거리에서도 잘 됐던 건 경쟁 앱이 없었기 때문.
 
 **가능한 해결 방향:**
 1. `AudioSource.VOICE_RECOGNITION` 사용 — 우선순위가 더 높을 수 있음
