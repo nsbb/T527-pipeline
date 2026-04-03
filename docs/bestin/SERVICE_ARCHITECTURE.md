@@ -111,11 +111,13 @@ adb shell am startservice -n com.t527.vad_service/com.t527.wav2vecdemo.VadPipeli
    → Toast: "하이 원더 감지!"
 
 4. VAD + STT:
+   → wakeword 꼬리 음성 제거 (1.0초 flush)
    → Silero VAD로 음성 구간 수집 (32ms 단위)
-   → 무음 1.5초 → 녹음 종료
+   → 무음 0.8초 → 녹음 종료
+   → 1초 미만 음성은 무시 (간투어 "어"/"음" 방지)
    → Conformer NPU 슬라이딩 윈도우 추론 (250ms/chunk)
    → CTC decode + 간투어 후처리
-   → Toast: 인식 결과 표시
+   → Overlay: 인식 결과 + 타이밍 표시
 
 5. VT 루프 복귀 (3으로 돌아감)
 ```
@@ -186,7 +188,7 @@ adb shell appops set com.t527.vad_service SYSTEM_ALERT_WINDOW allow
 | 항목 | 비고 |
 |------|------|
 | FM1388 → AudioRecord 연동 | AudioSource.MIC로 잡히는지 월패드에서 확인 |
-| Toast 동작 | 월패드에서는 됨 (데브킷에서는 차단되어 overlay 사용) |
+| Toast 동작 | Android 13 Service에서 Toast 안 됨 → Overlay 사용 |
 | NPU 드라이버 | libVIPlite.so, libVIPuser.so 월패드에 있는지 확인 |
 | 서비스 자동 시작 | 베스틴 부팅 시 intent로 실행해주는 방식 |
 
