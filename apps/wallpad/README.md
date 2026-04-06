@@ -8,6 +8,7 @@
 |---|--------|------|
 | **t527_smart_service** | `com.t527.smart_service` | Kotlin v1: 모듈 분리 + JSON config + EMA/NofM 후처리 + NLU |
 | **t527_smart_v2** | `com.t527.smart_v2` | v1 + ParameterExtractor + MP3 응답 + config reload |
+| **t527_vt_config_test** | `com.t527.vad_service` | VT only + JSON config + 카운팅 로그 (VT 성능 테스트용) |
 
 백업 (AndroidStudioProjects에만, git 미포함):
 | 앱 | 패키지 | 설명 |
