@@ -1,0 +1,22 @@
+{
+  "wakeword": {
+    "threshold": 0.40
+  },
+  "vad": {
+    "threshold": 0.5,
+    "silence_timeout_ms": 800,
+    "max_speech_ms": 10000,
+    "min_speech_seconds": 0.5
+  },
+  "audio": {
+    "sample_rate_mic": 48000,
+    "sample_rate_model": 16000,
+    "flush_after_wake_ms": 1000
+  },
+  "stt": {
+    "mel_scale": 0.025880949571728706,
+    "mel_zp": 84,
+    "seq_out": 76,
+    "stride_out": 62
+  }
+}
