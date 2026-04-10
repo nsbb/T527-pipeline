@@ -5,7 +5,7 @@
 **Q: 왜 Conformer?**
 - Conformer = CNN + Transformer 결합. CNN이 로컬 패턴, Transformer가 글로벌 컨텍스트 캡처
 - CTC 디코딩이라 autoregressive 모델(Whisper 등)보다 추론이 빠름
-- NeMo 프레임워크에서 한국어 pre-trained 모델 사용 가능 (SungBeom/stt_kr_conformer_ctc_medium)
+- HuggingFace에서 AIHub 한국어 14,000시간 pre-trained 모델 사용 (https://huggingface.co/SungBeom/stt_kr_conformer_ctc_medium)
 
 **Q: 다른 모델은?**
 
