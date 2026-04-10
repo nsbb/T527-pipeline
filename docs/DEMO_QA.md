@@ -44,9 +44,9 @@
 - QAT가 양자화 손실의 88%를 복구
 
 **Q: QAT 어떻게 했나?**
-- AIHub 한국어 음성 데이터 95K utterances (84시간)
+- AIHub 한국어 음성 데이터 1M utterances
 - NeMo 프레임워크에서 fake quantization으로 fine-tuning
-- margin 0.3, 10 epochs
+- margin 0.3, 1 epoch
 - 핵심 발견: 데이터 다양성 > 반복 학습 (1M 1epoch > 100K 10epoch)
 
 **Q: Calibration은?**
