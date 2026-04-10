@@ -89,9 +89,7 @@
 ## 4. NPU
 
 **Q: CPU 대비 NPU?**
-- Conformer: NPU 250ms vs CPU 예상 1~2초 (4~8배 빠름)
-- Wakeword: NPU 8ms (실시간 가능)
-- T527 NPU: VIP9000NANOSI_PLUS, 546/696MHz
+- Conformer: NPU 250ms vs CPU 예상 ~3초 (약 12배 빠름)
 
 **Q: NPU 제한?**
 - NB 크기 ~120MB 제한 (그 이상 status=-1)
