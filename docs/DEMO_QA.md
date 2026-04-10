@@ -12,6 +12,7 @@
 | 모델 | 시도 결과 |
 |------|---------|
 | Conformer CTC | ✅ 채택. CER 8.86%, 250ms/chunk |
+| CitriNet | △ 변환 완료. CER 33%로 측정 완료 |
 | Wav2Vec2 | △ 영어 CER 17.5%, 한국어 fine-tune 성공했으나 Conformer보다 성능 낮음 |
 | Zipformer | ✗ 양자화 실패. 모든 방식 CER 100% |
 | DeepSpeech2 | ✗ 오래된 아키텍처, 정확도 낮음 |
