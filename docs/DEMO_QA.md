@@ -37,11 +37,10 @@
 |------|---------|------|
 | FP32 (원본) | 6.03% | 서버 추론 기준 |
 | PTQ uint8 | 16.44% | Post-Training Quantization. 양자화 손실 큼 |
-| **QAT uint8** | **7.24%** | Quantization-Aware Training. 양자화 손실 88% 제거 |
-| QAT 1M best | **8.86%** | 18,368샘플 전체 평균 |
+| **QAT uint8 (1M best)** | **8.86%** | Quantization-Aware Training. 18,368샘플 전체 평균 |
 
-- PTQ → QAT로 CER 16.44% → 7.24% (9.2%p 개선)
-- QAT가 양자화 손실의 88%를 복구
+- PTQ → QAT로 CER 16.44% → 8.86% (7.6%p 개선)
+- QAT가 양자화 손실을 크게 복구
 
 **Q: QAT 어떻게 했나?**
 - AIHub 한국어 음성 데이터 1M utterances
@@ -134,7 +133,7 @@
 
 **Q: 가장 어려웠던 부분?**
 1. **NeMo → ONNX → NB 변환**: NeMo Docker 버전, Acuity LD_LIBRARY_PATH, VivanteIDE 환경변수 등 6개 이상의 함정. 반복 실패 후 해결
-2. **양자화 정확도**: PTQ CER 16% → QAT로 7%까지 줄이는 과정. Calibration 데이터 선정이 핵심
+2. **양자화 정확도**: PTQ CER 16% → QAT로 8.86%까지 줄이는 과정. Calibration 데이터 선정이 핵심
 3. **Wakeword mel scale 불일치**: BCResNet 학습 때 HTK mel → 양자화 때 Slaney mel 사용해서 recall 0.36% → HTK로 재생성 후 94.3%
 
 **Q: 어떤 환경에서 안 되나?**
