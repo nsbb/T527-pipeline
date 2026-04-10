@@ -123,7 +123,7 @@
 **Q: 실시간 스트리밍 STT?**
 - 현재는 VAD로 발화 끝나면 일괄 추론 (batch)
 - 슬라이딩 윈도우로 청크 단위 추론은 하고 있음 (3초 윈도우, 2.5초 stride)
-- 진정한 스트리밍(partial result)은 미구현
+- 실시간 스트리밍(partial result) 구현 예정
 
 ---
 
@@ -134,39 +134,14 @@
 2. **양자화 정확도**: PTQ CER 16% → QAT로 8.86%까지 줄이는 과정. Calibration 데이터 선정이 핵심
 3. **Wakeword mel scale 불일치**: BCResNet 학습 때 HTK mel → 양자화 때 Slaney mel 사용해서 recall 0.36% → HTK로 재생성 후 94.3%
 
-**Q: 어떤 환경에서 안 되나?**
-- FM1388 디지털 마이크 특성상 USB 마이크보다 wakeword prob 낮음
-- 마이크 점유 충돌 (wallpadcall 앱이 동시 사용 시)
-- 새 소프트웨어에서 마이크 설정 변경 필요
-
 ---
 
 ## 7. 향후 계획
 
 **Q: NLU(의도 분류)?**
-- KoELECTRA-Small ONNX (36MB)로 48개 intent 분류 구현 완료
-- STT → "에어컨 켜줘" → NLU → `ac_control_on` → "에어컨을 켜드릴게요"
-- 추론 ~80ms (CPU ONNX Runtime)
-- 파라미터 추출(거실, 23도 등) regex 기반 구현
+- NLU 모델 설계 및 학습 진행 중
+- STT → "에어컨 켜줘" → NLU → intent(`ac_control_on`) → "에어컨을 켜드릴게요"
 
-**Q: 실제 기기 제어?**
-- iCMD 프로토콜로 월패드 기기 제어 가능 (구조 설계 완료)
-- 실제 연동은 베스틴 협조 필요
-
-**Q: 모델 경량화?**
-- Conformer 102MB → 더 작은 아키텍처 탐색 가능
-- 현재 122.5M 파라미터 → small 버전으로 줄일 수 있으나 정확도 trade-off
-
-**Q: 다국어?**
-- 현재 한국어 전용 (BPE vocab 2049)
-- 영어는 Wav2Vec2로 별도 구현 가능 (CER 17.5%)
-- 다국어 모델(Whisper 등)은 NPU 변환 어려움
-
----
-
-## 8. 시연 시 주의사항
-
-- 데브킷(USB 마이크)에서 시연 → FM1388 문제 없음
-- "하이 원더" → 2~3초 후 명령 → overlay에 결과 표시
-- 조용한 환경에서 1~2m 거리 권장
-- threshold 0.40이라 가끔 한 번에 안 잡힐 수 있음 → 다시 시도
+**Q: QAT 개선 계획?**
+- 랜덤 100만개 대신 데이터 분포를 가장 잘 나타내는 데이터를 K-Medoids 기법으로 선별하여 학습 예정
+- 다양한 loss 함수 적용 예정 (현재 Knowledge Distillation + Margin Max로는 개선 안 됨)
