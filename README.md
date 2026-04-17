@@ -3,200 +3,186 @@
 T527 Vivante NPU에서 **서버 없이** 동작하는 음성 AI 파이프라인.
 
 ```
-"하이 원더" → [BCResNet 7ms] → 3초 녹음 → [Conformer 250ms] → 한국어 텍스트
+"하이 원더" → [BCResNet 7ms] → 삐! → VAD+STT → 한국어 텍스트 → 단지서버 전송
+                                                                    ↑
+                                            단지서버 TTS 수신 ← HTTPS 8030
 ```
+
+---
+
+## 앱 버전
+
+| 앱 | 위치 | 설명 |
+|---|------|------|
+| **t527_pipeline** | `apps/t527_pipeline/` | VT → 고정 3초 STT (기본) |
+| **vad_service_with_server** | `apps/vad_service_with_server/` | **VT → VAD → STT → 단지서버 전송 + TTS 수신 (현재 주력)** |
+
+---
+
+## wake_wonder_onnx 분석 및 적용
+
+### wake_wonder_onnx가 뭔가
+
+다른 팀(Gemini Code Assist + Claude Code)이 만든 wakeword+STT 앱. ONNX Runtime(CPU) 기반.
+`HANDOFF.md` ~ `HANDOFF_4.1.md`에 개발 과정이 문서화되어 있음.
+
+### wake_wonder_onnx의 핵심 아키텍처
+
+```
+AudioRecord → PCM 워커(10ms 프레임) → 앱 레벨 deque 버퍼
+                                          ↓
+                              WAKE MODE: 항상 streaming → wakeword 추론
+                                          ↓ (감지!)
+                              state.audio_buffer.clear()  ← deque 즉시 클리어
+                                          ↓
+                              STT MODE: VAD로 새 발화 감지 → 녹음
+```
+
+**핵심 설계:** 오디오를 앱 레벨 deque에 복사해서 관리. wakeword 감지 시 `buffer.clear()` 한 줄로 즉시 클리어. flush(고정 시간 오디오 버리기) 없음.
+
+### wake_wonder_onnx가 해결한 문제들
+
+| 문제 | HANDOFF | 해결 |
+|------|---------|------|
+| wakeword 후처리 | HANDOFF.md | EMA + N-of-M + Refractory 4단계 체인 |
+| 감지 후 불필요한 추론 제거 | HANDOFF_2.md | 큐 정리 로직 |
+| "하이 빅스비" 잔여음 0.3초 WAV | HANDOFF_3.md | 플래그 설정 순서 교정 + silence_count 리셋 |
+| GetState()가 매 호출마다 덮어씀 | HANDOFF_4.md | 멤버 초기값 + GetState() 내 store 제거 |
+| WAKE→STT 모드 분리 | HANDOFF_4.1.md | WAKE: VAD 없이 streaming, STT: VAD로 발화 감지 |
+
+### 우리 환경(VadPipelineService)에 적용 시도
+
+**차이점:** 우리는 ONNX Runtime이 아닌 **T527 NPU (VIPLite)**로 추론. AudioRecord에서 직접 read()하는 구조.
+
+#### 시도 1: buffer.clear() 방식 적용
+
+wake_wonder_onnx처럼 flush 없이 AudioRecord 버퍼만 비우려 함.
+
+```java
+// READ_NON_BLOCKING으로 버퍼 비우기 시도
+short[] discard = new short[Math.min(staleSize, SR_MIC)];
+recorder.read(discard, 0, discard.length, AudioRecord.READ_NON_BLOCKING);
+```
+
+**결과:** 실패. "하이 원더" 1.5초 오디오가 그대로 VAD에 진입. `speech 3.04s` → STT "에어" (garbage)
+
+**원인:** AudioRecord 내부 버퍼는 `read()`로 읽어야만 비워짐. 한 번 호출로 전부 안 비워짐.
+
+#### 시도 2: 반복 drain
+
+```java
+short[] drain = new short[4800];
+while (recorder.read(drain, 0, drain.length, AudioRecord.READ_NON_BLOCKING) > 0) {}
+```
+
+**결과:** 실패. wakeword 감지 자체 불가.
+
+#### 근본 원인
+
+| | wake_wonder_onnx | vad_service_with_server |
+|---|---|---|
+| 오디오 버퍼 | **앱 레벨 deque** | **AudioRecord 내부 버퍼** |
+| 클리어 | `buffer.clear()` — 즉시 0ms | `recorder.read()` 반복 — 시간 소요 |
+
+**wake_wonder_onnx의 buffer.clear()는 앱 레벨 deque라서 가능.** AudioRecord 내부 버퍼는 읽어서 버려야 함 = flush. 구조가 다르므로 직접 적용 불가.
+
+상세 분석: `docs/bestin/BUFFER_CLEAR_VS_FLUSH.md`
+
+### 대신 어떻게 해결했는가
+
+wake_wonder_onnx의 buffer-clear를 쓸 수 없으므로, flush 기반에서 개선:
+
+#### 해결 1: flush 1.0초 → 0.3초
+
+**문제:** flush 1.0초가 명령어 앞부분까지 삼킴. "엘리베이터 불러줘" → "어"
+
+wakeword 감지 지연(~0.5초) + flush 1.0초 = ~1.5초 손실. 명령어가 거의 다 잘림.
+
+**해결:** 0.3초로 축소. wakeword 꼬리("더")는 제거되고, 명령어는 보존.
+
+#### 해결 2: flush 후 삐 소리
+
+**문제:** 사용자가 "하이 원더" 직후 바로 명령어를 말하면 flush에 잘림.
+
+**해결:** flush 완료 후 ToneGenerator beep. 사용자가 삐 소리 듣고 말하면 안 잘림.
+
+```
+wakeword 감지 → flush 0.3초 → 삐! → VAD 시작 (여기서부터 녹음)
+```
+
+#### 해결 3: trailing silence 제거
+
+**문제:** VAD silence 구간이 STT에 포함 → "엘리베이터 켜줘 **오**"
+
+**해결:** VAD 루프 종료 후 마지막 silence 프레임 제거.
+
+```java
+int removeCount = Math.min(silenceFrames, speechChunks.size());
+for (int i = 0; i < removeCount; i++) {
+    speechChunks.remove(speechChunks.size() - 1);
+}
+```
+
+#### 해결 4: STT 후 wakeword NPU reinit
+
+**문제:** Conformer NPU 추론 후 wakeword NPU 출력이 상수 고정 (prob 0.10).
+
+**해결:** STT 실행 후 wakeword 모델을 매번 reinit.
+
+```java
+runStt(recorder);
+mJni.releaseWakeword();
+mJni.initWakeword(mWkNbPath);
+```
+
+#### 해결 5: 부팅 자동시작 (AWBMS + Activity 경유)
+
+**문제 1:** Allwinner AWBMS가 서비스 시작 차단.
+**해결:** `/vendor/etc/awbms_config` 화이트리스트에 패키지 추가.
+
+**문제 2:** BootReceiver → Service 직접 시작 시 마이크 silenced.
+**해결:** BootReceiver → **Activity 경유** → Service 시작. Activity foreground에서 시작해야 silenced:false.
+
+---
+
+## 현재 설정값
+
+| 파라미터 | 값 | 비고 |
+|---------|-----|------|
+| VT threshold | 0.40 | FM1388 마이크 기준 |
+| **Flush** | **0.3초** | 1.0초 → 명령어 잘림 방지 |
+| **Trailing silence** | **제거** | "오" 붙는 현상 방지 |
+| **Wakeword reinit** | **STT 후 매번** | NPU 깨짐 방지 |
+| **Beep** | **flush 후** | 사용자에게 말해도 된다는 신호 |
+| VAD threshold | 0.50 | |
+| Silence timeout | 800ms | 1500ms → 2-chunk 방지 |
+| Speech-only 최소 | 0.5초 | 간투어("어") 필터 |
+| 단지서버 URL | https://10.0.1.1/ai/text/send | multipart/form-data |
+| TTS 수신 포트 | 8030 (HTTPS) | 자체서명 SSL |
 
 ---
 
 ## 성능
 
-| 단계 | 모델 | NB 크기 | NPU 추론 | 전체 지연 |
-|------|------|--------|---------|---------|
-| Wakeword (VT) | BCResNet-t2 uint8 | **229KB** | **8ms** | mel 36ms + npu 8ms = **44ms** |
-| STT | Conformer CTC uint8 | **102MB** | **250ms** | mel 70ms + npu 250ms = **320ms** |
-| **파이프라인 전체** | | **~102MB** | | "하이원더" → 텍스트 **~3.5초** |
-
-### 메모리 사용량
-
-| 항목 | 크기 | RAM 3.96GB 대비 |
-|------|------|---------------|
-| 모델 (Conformer 102MB + Wakeword 229KB) | 102MB | **2.5%** |
-| 앱 실제 점유 (PSS) | **90MB** | **2.2%** |
-| 앱 전체 사용 (RSS) | 209MB | 5.2% |
-| 남은 RAM | ~2.4GB | 60.6% |
-
-> PSS = 공유 메모리를 앱 수만큼 나눈 실제 점유량. RSS = 공유 포함 전체.
-> 실제 메모리 차지는 PSS 90MB.
-
-- Wakeword **상시 로드**: NB 229KB + 0.5초마다 mel+NPU 44ms (CPU ~9%)
-- Conformer **상시 로드**: NB 102MB, wakeword 감지 시에만 추론
+| 단계 | 모델 | NB 크기 | NPU 추론 |
+|------|------|--------|---------|
+| Wakeword (VT) | BCResNet-t2 uint8 | **229KB** | **8ms** |
+| STT | Conformer CTC uint8 | **102MB** | **250ms** |
 
 ### STT 정확도
 
-| | FP32 (서버) | uint8 (T527 NPU) | 양자화 손실 |
-|---|-----------|-----------------|----------|
-| avg_real (자체 368개) | 6.03% | **7.24%** | +1.21%p |
-| QAT가 양자화 손실 88% 제거 | | PTQ 16.44% → QAT 7.24% | |
-
-### Wakeword 정확도
-
-| | T527 uint8 | RK3588 FP16 |
-|---|-----------|-------------|
-| Recall (th=0.40) | **94.3%** | 93.95% |
-| FP | 6 | 8 |
-| 추론 시간 | **8ms** | 8ms |
+| | FP32 (서버) | uint8 (T527 NPU) |
+|---|-----------|-----------------|
+| avg_real (자체 368개) | 6.03% | **7.24%** |
 
 ---
 
-## 앱
+## 월패드 배포 주의사항
 
-| 앱 | 패키지명 | 설명 |
-|---|--------|------|
-| **Conformer STT** | com.t527.conformer_stt | 버튼 클릭 → 3초 녹음 → STT |
-| **T527 Pipeline** | com.t527.pipeline | "하이원더" → 자동 녹음 → STT |
-
-### 앱 구조
-
-```
-앱
-├── assets/models/
-│   ├── Conformer/          (102MB NB + vocab + meta)
-│   └── Wakeword/           (229KB NB + meta)
-├── jni/conformer/
-│   ├── awconformersdk.c    (Conformer + Wakeword NPU JNI)
-│   ├── conformer_mel.c     (Conformer mel: Slaney, C/KissFFT)
-│   └── wakeword_mel.c      (Wakeword mel: HTK, C/KissFFT)
-├── PipelineActivity.java   (VT → STT 파이프라인)
-└── ConformerMicActivity.java (버튼 STT)
-```
-
----
-
-## 모델
-
-### Conformer CTC (STT)
-
-| 항목 | 값 |
-|------|-----|
-| 원본 | SungBeom/stt_kr_conformer_ctc_medium (HuggingFace) |
-| 파라미터 | 122.5M (18 layers, d_model=512) |
-| QAT | AIHub 95K (84hr), 10 epoch, margin 0.3 |
-| 양자화 | uint8 asymmetric_affine KL, **calib 100개 (aihub)** |
-| NB 크기 | **102MB** |
-| 입력 | [1, 80, 301] uint8 mel (3초) |
-| 출력 | [1, 76, 2049] uint8 logits |
-| 추론 | **250ms/chunk**, RTF 0.10 |
-
-### BCResNet-t2 (Wakeword)
-
-| 항목 | 값 |
-|------|-----|
-| 원본 | BCResNet-t2-Focal-ep110.onnx |
-| 양자화 | uint8 asymmetric_affine KL, **HTK mel calib 100개** |
-| NB 크기 | **229KB** |
-| 입력 | [1, 1, 40, 151] uint8 LogMel (1.5초) |
-| 출력 | [1, 2] uint8 (non-wake, wake) |
-| 추론 | **8ms** |
-| Threshold | 0.40 |
-
----
-
-## 해결한 문제들
-
-### 1. NeMo → ONNX → NB 변환 실패
-
-**증상:** `IndexError: list index out of range` (Acuity import)
-
-**원인 2가지:**
-1. 로컬 NeMo(pip)로 ONNX export → NeMo Docker(23.06) 사용 필수
-2. Docker에서 Acuity 실행 시 `LD_LIBRARY_PATH` 미설정
-
-**해결:** NeMo Docker export + Docker 내 Acuity 6.12 binary + LD_LIBRARY_PATH 설정
-
-### 2. NB export 실패 (`create network 0 failed`)
-
-**원인:** optimize 플래그 잘못됨
-
-**해결:** `VIP9000NANOSI_PLUS_PID0X10000016` (PID 포함 필수)
-
-### 3. NB export 실패 (`Fatal model compilation error: 512`)
-
-**원인:** VivanteIDE 환경변수 미설정
-
-**해결:** `REAL_GCC`, `VIVANTE_VIP_HOME`, `VIVANTE_SDK_DIR`, `EXTRALFLAGS` 전부 설정
-
-### 4. Calibration 데이터 부족으로 QAT 모델 성능 저하
-
-**증상:** QAT full (4350hr) 모델이 100k보다 나쁨
-
-**원인:** calib 10개로는 양자화 range가 부정확
-
-**해결:** calib 100개로 늘림. **calib 소스보다 개수가 중요** (aihub/real/mix 간 차이 < 개수 차이)
-
-### 5. Wakeword uint8 양자화 recall 0.36%
-
-**증상:** BCResNet uint8로 양자화하니 recall 거의 0%
-
-**원인:** Calibration 데이터의 mel scale이 모델 학습 때와 다름 (Slaney vs HTK)
-
-**해결:** 모델 학습 시 사용한 **HTK mel scale**로 calib 데이터 재생성 → recall 94.3%
-
-### 6. vpm_run vs 앱 결과 불일치
-
-**증상:** 동시에 vpm_run 테스트 + 앱 테스트 돌리면 결과 다름
-
-**원인:** 같은 `/data/local/tmp/kr_conf_sb/chunk.dat` 파일을 동시에 쓰면서 충돌
-
-**해결:** 동시 실행 금지. 검증: 단독 실행 시 30/30 완전 일치 확인
-
-### 7. Pipeline 앱 wakeword 감지 느림
-
-**증상:** "하이원더" 말하고 수 초 후에야 감지
-
-**원인:** Java에서 DFT 계산 (512-point × 151 frames = 77,312번 삼각함수)
-
-**해결:** C/JNI의 KissFFT로 교체 → mel 36ms + NPU 8ms = **44ms**
-
-### 8. "하이원더" 한 번 말했는데 여러 번 감지
-
-**원인:** Ring buffer에 이전 음성 잔여
-
-**해결:** STT 시작 시 ring buffer 초기화 + 500ms cooldown
-
-### 9. USB adb 연결 불가 (공장 초기화 후에도)
-
-**증상:** Settings → Connected Device → This device 누르면 프리징
-
-**상태:** 미해결. 이더넷 + 수동 IP로 우회 가능
-
-### 10. 끝에 "음" 간투어 붙는 문제
-
-**증상:** 모든 인식 결과 끝에 "음" 추가
-
-**해결:** CTC 디코더에 후처리 추가 — 끝이 " 음"이면 제거
-
----
-
-## 실험 결과 요약
-
-### QAT 모델 비교 (자체 데이터 368개)
-
-| 모델 | 학습 데이터 | calib | avg CER |
-|------|---------|-------|---------|
-| PTQ (baseline) | - | 10개 | 16.44% |
-| **QAT 100k** | **AIHub 84hr** | **aihub 100개** | **7.24%** |
-| QAT 100k | AIHub 84hr | mix 100개 | 8.32% |
-| QAT 100k | AIHub 84hr | real 100개 | 15.0% |
-| QAT full | AIHub 4356hr | aihub 100개 | 14.81% |
-| QAT KD m0.5 | AIHub 84hr | aihub 100개 | 8.40% |
-
-### Wakeword 양자화 비교 (1,897개)
-
-| 양자화 | calib mel | Recall (th=0.55) | Recall (th=0.40) |
-|-------|----------|-----------------|-----------------|
-| uint8 Slaney | Slaney (잘못됨) | 0.36% | 42.7% |
-| int16 DFP | Slaney | 33.81% | - |
-| **uint8 HTK** | **HTK (정확)** | **78.6%** | **94.3%** |
+1. **AWBMS 화이트리스트:** `/vendor/etc/awbms_config`에 `com.t527.vad_service` 추가 필수
+2. **앱 업데이트:** 반드시 `adb install -r` 사용. ⚠️ `pm uninstall` 금지 (NPU 깨짐)
+3. **시간 동기화:** 단지서버가 timestamp 검증하므로 시간 맞춰야 함
+4. **마이크 권한:** 첫 설치 시 Activity에서 RECORD_AUDIO 권한 획득 필요
 
 ---
 
@@ -206,15 +192,15 @@ T527 Vivante NPU에서 **서버 없이** 동작하는 음성 AI 파이프라인.
 t527-pipeline/
 ├── README.md
 ├── apps/
-│   ├── conformer_stt/     → AndroidStudioProjects/conformer_stt
-│   └── t527_pipeline/     → AndroidStudioProjects/t527_pipeline
-├── models/
-│   ├── conformer/         → t527-stt repo
-│   └── wakeword/          → t527-wakeword repo
-└── docs/
-    ├── NEMO_TO_NB_CONVERSION_GUIDE.md
-    ├── mel_preprocessing.yaml
-    └── APP_VS_VPMRUN_VERIFICATION.md
+│   ├── t527_pipeline/                → 기본 VT+STT
+│   └── vad_service_with_server/      → 단지서버 연동 (현재 주력)
+├── docs/
+│   ├── bestin/
+│   │   ├── BUFFER_CLEAR_VS_FLUSH.md  → wake_wonder_onnx 분석
+│   │   ├── PROBLEMS.md               → 월패드 연동 문제 기록
+│   │   └── SERVICE_ARCHITECTURE.md
+│   └── NEMO_TO_NB_CONVERSION_GUIDE.md
+└── models/
 ```
 
 ---
@@ -223,5 +209,5 @@ t527-pipeline/
 
 | 레포 | 내용 |
 |------|------|
-| [nsbb/T527-STT](https://github.com/nsbb/T527-STT) | Conformer CTC 양자화 + 18k 테스트 + QAT |
+| [nsbb/T527-STT](https://github.com/nsbb/T527-STT) | Conformer CTC 양자화 + QAT |
 | [nsbb/T527-wakeword](https://github.com/nsbb/T527-wakeword) | BCResNet wakeword T527 포팅 |
